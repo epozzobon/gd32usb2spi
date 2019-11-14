@@ -20,7 +20,6 @@
  */
 
 
-#include "usb_driver.h"
 #include "usb_cdcacm.h"
 
 #include <stdlib.h>

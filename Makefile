@@ -57,7 +57,7 @@ CSTD		?= -std=c99
 # Source files
 
 OBJS		+= $(BINARY).o 
-OBJS		+= usb_cdcacm.o usb_driver.o
+OBJS		+= usb_cdcacm.o
 
 
 ifeq ($(strip $(OPENCM3_DIR)),)
