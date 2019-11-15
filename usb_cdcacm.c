@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2010 Gareth McMullin <gareth@blacksphere.co.nz>
  * Copyright (C) 2013 Alexandru Gagniuc <mr.nuke.me@gmail.com>
+ * Copyright (C) 2019 Enrico Pozzobon <enrico@epozzobon.it>
  *
  * This library is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -25,7 +26,7 @@
 #include <libopencm3/usb/cdc.h>
 #include <libopencm3/cm3/scb.h>
 #include <libopencm3/gd32/rcc.h>
-#include <libopencm3/gd32/f1x0/nvic.h>
+#include <libopencm3/stm32/st_usbfs.h>
 
 static const struct usb_device_descriptor dev = {
 	.bLength = USB_DT_DEVICE_SIZE,
@@ -178,7 +179,7 @@ static enum usbd_request_return_codes cdcacm_control_request(usbd_device * usbd_
 						     struct usb_setup_data *
 						     req))
 {
-	uint8_t dtr, rts;
+	bool dtr, rts;
 
 	(void)complete;
 	(void)buf;
@@ -195,7 +196,7 @@ static enum usbd_request_return_codes cdcacm_control_request(usbd_device * usbd_
 			dtr = (req->wValue & (1 << 0)) ? 1 : 0;
 			rts = (req->wValue & (1 << 1)) ? 1 : 0;
 
-			/* TODO: glue_set_line_state_cb(dtr, rts); */ (void) dtr; (void) rts;
+			cdcacm_on_set_line_state_cb(dtr, rts);
 
 			return USBD_REQ_HANDLED;
 		}
@@ -207,10 +208,10 @@ static enum usbd_request_return_codes cdcacm_control_request(usbd_device * usbd_
 
 			coding = (struct usb_cdc_line_coding *)*buf;
             (void) coding;
-            /* TODO: return glue_set_line_coding_cb(coding->dwDTERate,
+            return cdcacm_on_set_line_coding_cb(coding->dwDTERate,
 						       coding->bDataBits,
 						       coding->bParityType,
-						       coding->bCharFormat); */	return USBD_REQ_NOTSUPP;
+						       coding->bCharFormat);
 		}
 	}
 	return USBD_REQ_NOTSUPP;
@@ -223,7 +224,7 @@ static void cdcacm_data_rx_cb(usbd_device * usbd_dev, uint8_t ep)
 	(void)ep;
 
 	int len = usbd_ep_read_packet(usbd_dev, 0x01, buf, 64);
-	/* TODO: glue_send_data_cb(buf, len); */ (void) len; cdcacm_send_data(buf, len);
+	cdcacm_on_data_rx_cb(buf, len);
 }
 
 void cdcacm_send_data(uint8_t * buf, uint16_t len)
@@ -265,35 +266,20 @@ void cdcacm_line_state_changed_cb(uint8_t linemask)
 	while (usbd_ep_write_packet(acm_dev, 0x83, buf, size) == size) ;
 }
 
-static void usb_pins_setup(void)
-{
-    /* TODO: maybe set the pull up pin here */
-}
-
-static void usb_ints_setup(void)
-{
-	/* Gimme some interrupts */
-	nvic_enable_irq(NVIC_USB_LP_IRQ);
-	nvic_enable_irq(NVIC_USB_HP_IRQ);
-	nvic_enable_irq(NVIC_USB_WAKEUP_IRQ);
-}
-
-void cdcacm_init(void)
+const usbd_device *cdcacm_init(const usbd_driver * const driver)
 {
 	usbd_device *usbd_dev;
 
-	usb_pins_setup();
-
-	usbd_dev = usbd_init(&st_usbfs_v1_usb_driver, &dev, &config, usb_strings, 4,
+	usbd_dev = usbd_init(driver, &dev, &config, usb_strings, 4,
 			     usbd_control_buffer, sizeof(usbd_control_buffer));
 	acm_dev = usbd_dev;
+
 	usbd_register_set_config_callback(usbd_dev, cdcacm_set_config);
 
-	usb_ints_setup();
+	return usbd_dev;
 }
 
-void cdcacm_poll(void)
+inline void cdcacm_poll(void)
 {
 	usbd_poll(acm_dev);
 }
-

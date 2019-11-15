@@ -1,5 +1,5 @@
 
-BINARY = miniblink
+BINARY = usb2spi
 
 LDSCRIPT = gd32f1x0.ld
 
@@ -13,8 +13,7 @@ ARCH_FLAGS	= -mthumb -mcpu=cortex-m0 $(FP_FLAGS)
 # OpenOCD specific variables
 
 OOCD		?= openocd
-OOCD_INTERFACE	?= jlink
-OOCD_TARGET	?= stm32f1x
+OOCD_FILE   ?= oocd_file.cfg
 
 ################################################################################
 # Black Magic Probe specific variables
@@ -44,20 +43,19 @@ AS		:= $(PREFIX)as
 OBJCOPY		:= $(PREFIX)objcopy
 OBJDUMP		:= $(PREFIX)objdump
 GDB		:= $(PREFIX)gdb
-STFLASH		= $(shell which st-flash)
 STYLECHECK	:= /checkpatch.pl
 STYLECHECKFLAGS	:= --no-tree -f --terse --mailback
 STYLECHECKFILES	:= $(shell find . -name '*.[ch]')
 OPT		:= -Os
 DEBUG		:= -ggdb3
-CSTD		?= -std=c99
+CSTD		?= -std=c17
 
 
 ###############################################################################
 # Source files
 
-OBJS		+= $(BINARY).o 
-OBJS		+= usb_cdcacm.o
+OBJS		+= main.o 
+OBJS		+= usb_cdcacm.o ringbuf.o
 
 
 ifeq ($(strip $(OPENCM3_DIR)),)
@@ -225,7 +223,7 @@ print-%:
 clean:
 	@#printf "  CLEAN\n"
 	$(Q)$(RM) $(GENERATED_BINARIES) generated.* $(OBJS) $(OBJS:%.o=%.d)
-	$(Q)$(RM) *.elf *.d *.map *.o
+	$(Q)$(RM) *.elf *.d *.map *.o *.bin *.flash flash
 
 stylecheck: $(STYLECHECKFILES:=.stylecheck)
 styleclean: $(STYLECHECKFILES:=.styleclean)
@@ -243,35 +241,10 @@ styleclean: $(STYLECHECKFILES:=.styleclean)
 	$(Q)rm -f $*.stylecheck;
 
 
-%.stlink-flash: %.bin
-	@printf "  FLASH  $<\n"
-	$(STFLASH) write $(*).bin 0x8000000
+%.flash: %.bin
+	@printf "  FLASH   $<\n"
+	dfu-util -D $(*).bin
 
-ifeq ($(BMP_PORT),)
-ifeq ($(OOCD_FILE),)
-%.flash: %.elf
-	@printf "  FLASH   $<\n"
-	(echo "halt; program $(realpath $(*).elf) verify reset" | nc -4 localhost 4444 2>/dev/null) || \
-		$(OOCD) -f interface/$(OOCD_INTERFACE).cfg \
-		-f target/$(OOCD_TARGET).cfg \
-		-c "program $(*).elf verify reset exit" \
-		$(NULL)
-else
-%.flash: %.elf
-	@printf "  FLASH   $<\n"
-	(echo "halt; program $(realpath $(*).elf) verify reset" | nc -4 localhost 4444 2>/dev/null) || \
-		$(OOCD) -f $(OOCD_FILE) \
-		-c "program $(*).elf verify reset exit" \
-		$(NULL)
-endif
-else
-%.flash: %.elf
-	@printf "  GDB   $(*).elf (flash)\n"
-	$(GDB) --batch \
-		   -ex 'target extended-remote $(BMP_PORT)' \
-		   -x $(EXAMPLES_SCRIPT_DIR)/black_magic_probe_flash.scr \
-		   $(*).elf
-endif
 
 .PHONY: images clean stylecheck styleclean elf bin hex srec list
 
