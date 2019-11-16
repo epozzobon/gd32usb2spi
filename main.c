@@ -70,7 +70,6 @@ static void gpio_setup(void)
 
     /* Set GPIOs to 'output push-pull'. */
     gpio_mode_setup(PORT_LED, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, PIN_LED);
-    gpio_mode_setup(PORT_USB_PUL, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, PIN_USB_PUL);
     gpio_mode_setup(PORT_SPI2_NSS, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, PIN_SPI2_NSS);
     gpio_mode_setup(PORT_SPI2_SCK, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, PIN_SPI2_SCK);
     gpio_mode_setup(PORT_SPI2_MO, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, PIN_SPI2_MO);
@@ -78,6 +77,11 @@ static void gpio_setup(void)
     /* Set GPIOs to 'floating input'. */
     gpio_mode_setup(PORT_USR_KEY, GPIO_MODE_INPUT, GPIO_PUPD_NONE, PIN_USR_KEY);
     gpio_mode_setup(PORT_SPI2_MI, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, PIN_SPI2_MI);
+
+    /* Start the USB pins as floating inputs, to make the host reset USB */
+    gpio_mode_setup(PORT_USB_PUL, GPIO_MODE_INPUT, GPIO_PUPD_NONE, PIN_USB_PUL);
+    gpio_mode_setup(PORT_USBDP, GPIO_MODE_INPUT, GPIO_PUPD_NONE, PIN_USBDP);
+    gpio_mode_setup(PORT_USBDM, GPIO_MODE_INPUT, GPIO_PUPD_NONE, PIN_USBDM);
 }
 
 
@@ -98,6 +102,10 @@ static void spi2_setup(void)
 
 static void usb_setup(void)
 {
+    gpio_mode_setup(PORT_USB_PUL, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, PIN_USB_PUL);
+    gpio_mode_setup(PORT_USBDM, GPIO_MODE_AF, GPIO_PUPD_NONE, PIN_USBDM);
+    gpio_mode_setup(PORT_USBDP, GPIO_MODE_AF, GPIO_PUPD_NONE, PIN_USBDP);
+
     rcc_periph_clock_enable(RCC_USB);
     gpio_set(PORT_USB_PUL, PIN_USB_PUL);
 
@@ -112,34 +120,41 @@ static void usb_setup(void)
 static void delay_ms(unsigned int ms)
 {
     const unsigned int processor_clock = 72000000;
-    const unsigned int clks_each_loop = 4;
+    const unsigned int clks_each_loop = 3;
     uint32_t counter = processor_clock / clks_each_loop / 1000 * ms;
-    __asm__ ("\n\t"
-        "loop_here:         \n\t"
+    __asm__ ("\n"
         /* One iteration takes exacly clks_each_loop clock cycles */
-        "    sub %[c], #1   \n\t"
-        "    cmp %[c], #0   \n\t"
-        "    bne loop_here  \n\t"
-        :  : [c] "r" (counter));
+
+        "loop_here:         \n"
+        "    sub %[c], #1   \n"
+        "    bne loop_here  \n"
+
+        "\n" :  : [c] "r" (counter));
 }
 
 
 int main(void)
 {
+    cm_disable_interrupts();
+    
     clock_setup_24mhz_xtal();
-    cm_enable_interrupts();
 
     ringbuf_init(&rxring, rxbuf, sizeof(rxbuf));
 
     gpio_setup();
     spi2_setup();
+
+    /* Give the host some time to reset USB */
+    delay_ms(100);
     usb_setup();
+    cm_enable_interrupts();
+
 
     /* If this program is started with the key pressed,
      * then wait for it to be released */
     while (!gpio_get(PORT_USR_KEY, PIN_USR_KEY));
     
-    /* The next time the key is pressed, go into SWD programming mode */
+    /* The next time the key is pressed, go into SWD debugging mode */
     while (gpio_get(PORT_USR_KEY, PIN_USR_KEY)) {
         size_t i;
         uint8_t txbuf[128];

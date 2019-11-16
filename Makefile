@@ -241,9 +241,12 @@ styleclean: $(STYLECHECKFILES:=.styleclean)
 	$(Q)rm -f $*.stylecheck;
 
 
-%.flash: %.bin
+%.flash: %.bin patched_tang_primer_gd32_firmware
 	@printf "  FLASH   $<\n"
-	dfu-util -D $(*).bin
+	printf "" > flash.bin
+	dd if=patched_tang_primer_gd32_firmware of=flash.bin bs=8192 skip=1 count=1 seek=0
+	dd if=$(*).bin of=flash.bin bs=8192 skip=0 count=1 seek=1
+	dfu-util -D flash.bin
 
 
 .PHONY: images clean stylecheck styleclean elf bin hex srec list
