@@ -30,7 +30,6 @@
 #include <stdlib.h>
 #include <libopencm3/gd32/rcc.h>
 #include <libopencm3/gd32/gpio.h>
-#include <libopencm3/stm32/spi.h>
 #include <libopencm3/usb/usbd.h>
 #include <libopencm3/usb/cdc.h>
 #include <libopencm3/gd32/f1x0/nvic.h>
@@ -85,21 +84,6 @@ static void gpio_setup(void)
 }
 
 
-static void spi2_setup(void)
-{
-    rcc_periph_clock_enable(RCC_SPI2);
-    spi_reset(SPI2);
-
-    spi_init_master(SPI2, SPI_CR1_BAUDRATE_FPCLK_DIV_64, SPI_CR1_CPOL_CLK_TO_1_WHEN_IDLE,
-        SPI_CR1_CPHA_CLK_TRANSITION_2, SPI_CR1_DFF_8BIT, SPI_CR1_MSBFIRST);
-
-    spi_enable_software_slave_management(SPI2);
-    spi_set_nss_high(SPI2);
-
-    spi_enable(SPI2);
-}
-
-
 static void usb_setup(void)
 {
     gpio_mode_setup(PORT_USB_PUL, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, PIN_USB_PUL);
@@ -133,6 +117,41 @@ static void delay_ms(unsigned int ms)
 }
 
 
+static uint8_t spi_transfer(uint8_t tx)
+{
+    /* This goes approximately at 1 Mbps */
+    unsigned int d = tx;
+    unsigned int bit;
+    for (unsigned int i = 0; i < 8; i++) {
+        bit = d & 0x80;
+        d <<= 1;
+
+        /* Clock down and change MOSI */
+        gpio_clear(PORT_SPI2_SCK, PIN_SPI2_SCK);
+        if (bit) {
+            gpio_set(PORT_SPI2_MO, PIN_SPI2_MO);
+        } else {
+            gpio_clear(PORT_SPI2_MO, PIN_SPI2_MO);
+        }
+
+        __asm__ ("nop"); __asm__ ("nop"); __asm__ ("nop"); __asm__ ("nop");
+        __asm__ ("nop"); __asm__ ("nop"); __asm__ ("nop"); __asm__ ("nop");
+        
+        /* Clock up and read MISO */
+        gpio_set(PORT_SPI2_SCK, PIN_SPI2_SCK);
+        bit = gpio_get(PORT_SPI2_MI, PIN_SPI2_MI);
+        if (bit) {
+            d |= 1;
+        }
+
+        __asm__ ("nop"); __asm__ ("nop"); __asm__ ("nop"); __asm__ ("nop");
+        
+    }
+
+    return (uint8_t) d;
+}
+
+
 int main(void)
 {
     cm_disable_interrupts();
@@ -142,7 +161,6 @@ int main(void)
     ringbuf_init(&rxring, rxbuf, sizeof(rxbuf));
 
     gpio_setup();
-    spi2_setup();
 
     /* Give the host some time to reset USB */
     delay_ms(100);
@@ -160,7 +178,7 @@ int main(void)
         uint8_t txbuf[128];
         for (i = 0; i < 128 && !ringbuf_empty(&rxring); i++) {
             uint8_t r = ringbuf_read_byte(&rxring);
-            txbuf[i] = r = (uint8_t) spi_xfer(SPI2, r);
+            txbuf[i] = spi_transfer(r);
         }
         if (i > 0) {
             cdcacm_send_data(txbuf, i);
